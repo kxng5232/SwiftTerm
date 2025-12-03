@@ -429,18 +429,19 @@ extension TerminalView {
             let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
             if notWide  {
                 str.append(code == 0 ? " " : ch.getCharacter ())
+                col += 1
             } else {
                 // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Then add the character, and add an extra space so that the
-                // temporary string results in the position being correctly tracked for the
-                // temporary string with the right attribute
-                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
+                // Add the wide character WITHOUT a trailing space
+                // The drawing code will handle positioning based on terminal column tracking
+                var wideAttrs: [NSAttributedString.Key: Any] = getAttributes (attr, withUrl: hasUrl) ?? [:]
+                wideAttrs[.characterWidth] = 2  // Mark as wide character
+                res.append(NSAttributedString (string: "\(ch.getCharacter())", attributes: wideAttrs))
 
                 str = ""
-                col += 1
+                col += 2  // Wide character takes 2 columns
             }
-            col += 1
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
@@ -673,66 +674,38 @@ extension TerminalView {
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
 
-            // Track terminal column position (not string index)
-            // prevWasWide must persist across runs to handle CJK char + space spanning run boundaries
+            // Track terminal column position
             var col = 0
-            var prevWasWide = false
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                 let runFont = runAttributes[.font] as! TTFont
+
+                // Check if this run contains wide (CJK) characters via our custom attribute
+                let charWidth = (runAttributes[.characterWidth] as? Int) ?? 1
 
                 var runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                     CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                     count = runGlyphsCount
                 }
 
-                // Get the string indices for this run - these are indices into the full attributed string
-                var stringIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
-                CTRunGetStringIndices(run, CFRange(), &stringIndices)
-
-                // Get the full string for character lookup
-                let fullString = lineInfo.attrStr.string
-                let nsString = fullString as NSString
-
-                // Build filtered glyph list and positions
-                // Skip placeholder spaces after wide chars but keep correct column tracking
-                var filteredGlyphs: [CGGlyph] = []
+                // Build positions for all glyphs in this run
                 var positions: [CGPoint] = []
 
                 for i in 0..<runGlyphsCount {
-                    let stringIndex = Int(stringIndices[i])
-                    guard stringIndex >= 0 && stringIndex < nsString.length else {
-                        col += 1
-                        prevWasWide = false
-                        continue
+                    // Position glyph at current terminal column
+                    // For wide characters, center them within their 2-column space
+                    let xPos: CGFloat
+                    if charWidth == 2 {
+                        // Center wide character in 2-column space
+                        xPos = lineOrigin.x + (cellDimension.width * CGFloat(col)) + (cellDimension.width * 0.5)
+                    } else {
+                        xPos = lineOrigin.x + (cellDimension.width * CGFloat(col))
                     }
+                    positions.append(CGPoint(x: xPos, y: lineOrigin.y + yOffset))
 
-                    // Get the character at this string index
-                    let unichar = nsString.character(at: stringIndex)
-                    let code = UInt32(unichar)
-
-                    // Check if this is a wide (CJK) character
-                    let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
-
-                    // Skip placeholder space after wide character
-                    // Check for ASCII space (0x20) which is used as placeholder after CJK chars
-                    if prevWasWide && code == 0x20 {
-                        // Skip the placeholder space glyph but advance col by 1
-                        // This accounts for the second column of the wide char
-                        col += 1
-                        prevWasWide = false
-                        continue
-                    }
-
-                    // Add glyph with position at current terminal column
-                    filteredGlyphs.append(runGlyphs[i])
-                    positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
-
-                    // Advance column by 1 for all characters
-                    // Wide chars will have their second column handled by the skipped placeholder space
-                    col += 1
-                    prevWasWide = isWide
+                    // Advance column by character width
+                    col += charWidth
                 }
 
                 var backgroundColor: TTColor?
@@ -750,9 +723,12 @@ extension TerminalView {
                     context.setLineWidth(0)
                     context.setFillColor(backgroundColor.cgColor)
 
-                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    // For wide characters, adjust the transform to start at the left edge of the 2-column space
+                    let bgX = charWidth == 2 ? positions[0].x - (cellDimension.width * 0.5) : positions[0].x
+                    let transform = CGAffineTransform (translationX: bgX, y: 0)
 
-                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
+                    // Background width: each glyph takes charWidth columns
+                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount * charWidth)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
                     #if (lastLineExtends)
@@ -789,8 +765,8 @@ extension TerminalView {
                     context.setFillColor(cgColor)
                 }
 
-                if !filteredGlyphs.isEmpty {
-                    CTFontDrawGlyphs(runFont, filteredGlyphs, &positions, positions.count, context)
+                if !runGlyphs.isEmpty {
+                    CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
                 }
 
                 // Draw other attributes

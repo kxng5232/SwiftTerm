@@ -10,6 +10,7 @@ import Foundation
 extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
+    static let characterWidth: NSAttributedString.Key = .init("SwiftTerm_characterWidth") // Int: character width in terminal columns (1 for normal, 2 for CJK wide chars)
 }
 
 extension NSMutableAttributedString {
