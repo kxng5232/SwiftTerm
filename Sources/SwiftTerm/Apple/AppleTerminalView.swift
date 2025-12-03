@@ -425,6 +425,13 @@ extension TerminalView {
                 }
             }
             
+            // Skip continuation cells of wide characters (width == 0)
+            // These are placeholder cells that follow a wide (CJK) character
+            if ch.width == 0 {
+                col += 1
+                continue
+            }
+
             let code = ch.code
             let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
             if notWide  {
@@ -438,7 +445,6 @@ extension TerminalView {
                 res.append(NSAttributedString (string: "\(ch.getCharacter())", attributes: getAttributes (attr, withUrl: hasUrl)))
 
                 str = ""
-                col += 1  // Skip the next cell (wide chars occupy 2 cells)
             }
             col += 1
         }
