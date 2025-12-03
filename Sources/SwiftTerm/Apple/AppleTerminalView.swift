@@ -432,11 +432,12 @@ extension TerminalView {
             } else {
                 // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Then add the character with a zero-width space placeholder for the second column.
-                // Using ZWSP (U+200B) instead of regular space to avoid visible gaps between CJK characters.
-                // The ZWSP maintains the character count (for column alignment) but doesn't render visibly.
-                // See: https://github.com/migueldeicaza/SwiftTerm/pull/387
-                res.append(NSAttributedString (string: "\(ch.getCharacter())\u{200B}", attributes: getAttributes (attr, withUrl: hasUrl)))
+                // For CJK/wide characters: add the character with kerning attribute to occupy 2 columns.
+                // CoreText renders CJK characters as single glyphs, but terminal expects them to occupy
+                // 2 character cells. We add kern spacing equal to one cell width after each wide char.
+                var wideAttrs = getAttributes(attr, withUrl: hasUrl) ?? [:]
+                wideAttrs[.kern] = cellDimension.width  // Add one cell width of spacing after the character
+                res.append(NSAttributedString(string: String(ch.getCharacter()), attributes: wideAttrs))
 
                 str = ""
                 col += 1
