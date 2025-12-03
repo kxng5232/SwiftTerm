@@ -676,6 +676,9 @@ extension TerminalView {
 
             // Track terminal column position
             var col = 0
+            let fullString = lineInfo.attrStr.string
+            let nsString = fullString as NSString
+
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
@@ -689,14 +692,35 @@ extension TerminalView {
                     count = runGlyphsCount
                 }
 
+                // Get string indices to check for actual characters
+                var stringIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
+                CTRunGetStringIndices(run, CFRange(), &stringIndices)
+
                 // Build positions for all glyphs in this run
                 var positions: [CGPoint] = []
 
+                // Track run's starting column for background calculation
+                let runStartCol = col
+                var runTotalCols = 0
+
                 for i in 0..<runGlyphsCount {
+                    let stringIndex = Int(stringIndices[i])
+
+                    // For runs without characterWidth attribute, check each character individually
+                    var effectiveCharWidth = charWidth
+                    if charWidth == 1 && stringIndex >= 0 && stringIndex < nsString.length {
+                        let unichar = nsString.character(at: stringIndex)
+                        let code = UInt32(unichar)
+                        let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
+                        if isWide {
+                            effectiveCharWidth = 2
+                        }
+                    }
+
                     // Position glyph at current terminal column
                     // For wide characters, center them within their 2-column space
                     let xPos: CGFloat
-                    if charWidth == 2 {
+                    if effectiveCharWidth == 2 {
                         // Center wide character in 2-column space
                         xPos = lineOrigin.x + (cellDimension.width * CGFloat(col)) + (cellDimension.width * 0.5)
                     } else {
@@ -705,7 +729,8 @@ extension TerminalView {
                     positions.append(CGPoint(x: xPos, y: lineOrigin.y + yOffset))
 
                     // Advance column by character width
-                    col += charWidth
+                    col += effectiveCharWidth
+                    runTotalCols += effectiveCharWidth
                 }
 
                 var backgroundColor: TTColor?
@@ -723,12 +748,12 @@ extension TerminalView {
                     context.setLineWidth(0)
                     context.setFillColor(backgroundColor.cgColor)
 
-                    // For wide characters, adjust the transform to start at the left edge of the 2-column space
-                    let bgX = charWidth == 2 ? positions[0].x - (cellDimension.width * 0.5) : positions[0].x
+                    // Background starts at the run's starting column
+                    let bgX = lineOrigin.x + (cellDimension.width * CGFloat(runStartCol))
                     let transform = CGAffineTransform (translationX: bgX, y: 0)
 
-                    // Background width: each glyph takes charWidth columns
-                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount * charWidth)), height: cellDimension.height)
+                    // Background width: use the actual total columns calculated for this run
+                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runTotalCols)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
                     #if (lastLineExtends)
