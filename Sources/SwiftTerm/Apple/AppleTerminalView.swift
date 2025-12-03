@@ -716,8 +716,8 @@ extension TerminalView {
                     let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
 
                     // Skip placeholder space after wide character
+                    // Don't advance col here - it was already accounted for in the wide char's col += 2
                     if char == " " && prevWasWide {
-                        col += 1
                         prevWasWide = false
                         continue
                     }
