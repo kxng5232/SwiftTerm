@@ -674,7 +674,9 @@ extension TerminalView {
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
 
             // Track terminal column position (not string index)
+            // prevWasWide must persist across runs to handle CJK char + space spanning run boundaries
             var col = 0
+            var prevWasWide = false
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
@@ -698,7 +700,6 @@ extension TerminalView {
                 // Skip placeholder spaces after wide chars but keep correct column tracking
                 var filteredGlyphs: [CGGlyph] = []
                 var positions: [CGPoint] = []
-                var prevWasWide = false
 
                 for i in 0..<runGlyphsCount {
                     let charIndex = Int(stringIndices[i]) - runRange.location
