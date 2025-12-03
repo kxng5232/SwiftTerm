@@ -723,8 +723,10 @@ extension TerminalView {
                     }
 
                     // Add glyph with position at current terminal column
+                    // For wide (CJK) characters, add a small offset to center them within their 2-column space
                     filteredGlyphs.append(runGlyphs[i])
-                    positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
+                    let xOffset: CGFloat = isWide ? (cellDimension.width * 0.15) : 0
+                    positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)) + xOffset, y: lineOrigin.y + yOffset))
 
                     // Advance column: wide chars take 2 columns, others take 1
                     col += isWide ? 2 : 1
