@@ -687,14 +687,13 @@ extension TerminalView {
                     count = runGlyphsCount
                 }
 
-                // Get the string indices for this run
+                // Get the string indices for this run - these are indices into the full attributed string
                 var stringIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
                 CTRunGetStringIndices(run, CFRange(), &stringIndices)
 
-                // Get the attributed string range for this run
-                let runRange = CTRunGetStringRange(run)
-                let runString = (lineInfo.attrStr.string as NSString).substring(with: NSRange(location: runRange.location, length: runRange.length))
-                let runChars = Array(runString)
+                // Get the full string for character lookup
+                let fullString = lineInfo.attrStr.string
+                let nsString = fullString as NSString
 
                 // Build filtered glyph list and positions
                 // Skip placeholder spaces after wide chars but keep correct column tracking
@@ -702,22 +701,22 @@ extension TerminalView {
                 var positions: [CGPoint] = []
 
                 for i in 0..<runGlyphsCount {
-                    let charIndex = Int(stringIndices[i]) - runRange.location
-                    guard charIndex >= 0 && charIndex < runChars.count else {
+                    let stringIndex = Int(stringIndices[i])
+                    guard stringIndex >= 0 && stringIndex < nsString.length else {
                         col += 1
                         prevWasWide = false
                         continue
                     }
 
-                    let char = runChars[charIndex]
-                    let code = char.unicodeScalars.first?.value ?? 0
+                    // Get the character at this string index
+                    let unichar = nsString.character(at: stringIndex)
+                    let code = UInt32(unichar)
 
                     // Check if this is a wide (CJK) character
                     let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
 
                     // Skip placeholder space after wide character
                     // Don't advance col here - it was already accounted for in the wide char's col += 2
-                    // Don't reset prevWasWide here - the next char determines it
                     // Check for ASCII space (0x20) which is used as placeholder after CJK chars
                     if prevWasWide && code == 0x20 {
                         continue
