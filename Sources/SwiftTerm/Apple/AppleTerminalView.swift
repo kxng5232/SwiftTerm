@@ -716,26 +716,22 @@ extension TerminalView {
                     let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
 
                     // Skip placeholder space after wide character
-                    // Don't advance col here - it was already accounted for in the wide char's col += 2
                     // Check for ASCII space (0x20) which is used as placeholder after CJK chars
                     if prevWasWide && code == 0x20 {
-                        // Debug: print when we skip a space
-                        print("Skipping placeholder space at stringIndex \(stringIndex), col=\(col), glyph=\(runGlyphs[i])")
-                        prevWasWide = false  // Reset so next space after non-wide char is not skipped
+                        // Skip the placeholder space glyph but advance col by 1
+                        // This accounts for the second column of the wide char
+                        col += 1
+                        prevWasWide = false
                         continue
-                    }
-
-                    // Debug: print what we're drawing
-                    if isWide {
-                        print("Drawing wide char U+\(String(code, radix: 16)) at col=\(col)")
                     }
 
                     // Add glyph with position at current terminal column
                     filteredGlyphs.append(runGlyphs[i])
                     positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
 
-                    // Advance column: wide chars take 2 columns, others take 1
-                    col += isWide ? 2 : 1
+                    // Advance column by 1 for all characters
+                    // Wide chars will have their second column handled by the skipped placeholder space
+                    col += 1
                     prevWasWide = isWide
                 }
 
