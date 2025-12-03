@@ -425,26 +425,20 @@ extension TerminalView {
                 }
             }
             
-            // Skip continuation cells of wide characters (width == 0)
-            // These are placeholder cells that follow a wide (CJK) character
-            if ch.width == 0 {
-                col += 1
-                continue
-            }
-
             let code = ch.code
             let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
             if notWide  {
                 str.append(code == 0 ? " " : ch.getCharacter ())
             } else {
-                // Wide character (CJK etc.)
-                // Flush the contents we have so far
+                // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Add the wide character WITHOUT a trailing space
-                // Position tracking is handled in the drawing loop using terminal buffer data
-                res.append(NSAttributedString (string: "\(ch.getCharacter())", attributes: getAttributes (attr, withUrl: hasUrl)))
+                // Then add the character, and add an extra space so that the
+                // temporary string results in the position being correctly tracked for the
+                // temporary string with the right attribute
+                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
 
                 str = ""
+                col += 1
             }
             col += 1
         }
@@ -700,13 +694,17 @@ extension TerminalView {
                 let runString = (lineInfo.attrStr.string as NSString).substring(with: NSRange(location: runRange.location, length: runRange.length))
                 let runChars = Array(runString)
 
-                // Build glyph positions based on terminal column (accounting for wide characters)
+                // Build filtered glyph list and positions
+                // Skip placeholder spaces after wide chars but keep correct column tracking
+                var filteredGlyphs: [CGGlyph] = []
                 var positions: [CGPoint] = []
+                var prevWasWide = false
 
                 for i in 0..<runGlyphsCount {
                     let charIndex = Int(stringIndices[i]) - runRange.location
                     guard charIndex >= 0 && charIndex < runChars.count else {
                         col += 1
+                        prevWasWide = false
                         continue
                     }
 
@@ -716,11 +714,20 @@ extension TerminalView {
                     // Check if this is a wide (CJK) character
                     let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
 
-                    // Position glyph at current terminal column
+                    // Skip placeholder space after wide character
+                    if char == " " && prevWasWide {
+                        col += 1
+                        prevWasWide = false
+                        continue
+                    }
+
+                    // Add glyph with position at current terminal column
+                    filteredGlyphs.append(runGlyphs[i])
                     positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
 
                     // Advance column: wide chars take 2 columns, others take 1
                     col += isWide ? 2 : 1
+                    prevWasWide = isWide
                 }
 
                 var backgroundColor: TTColor?
@@ -777,8 +784,8 @@ extension TerminalView {
                     context.setFillColor(cgColor)
                 }
 
-                if !runGlyphs.isEmpty {
-                    CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+                if !filteredGlyphs.isEmpty {
+                    CTFontDrawGlyphs(runFont, filteredGlyphs, &positions, positions.count, context)
                 }
 
                 // Draw other attributes
