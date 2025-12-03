@@ -432,11 +432,10 @@ extension TerminalView {
             } else {
                 // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Add the wide character followed by a Braille Pattern Blank (U+2800).
-                // This invisible character acts as a placeholder for the second column
-                // that wide characters occupy in the terminal grid.
-                // Using U+2800 instead of space to avoid visible gaps between CJK characters.
-                res.append(NSAttributedString (string: "\(ch.getCharacter())\u{2800}", attributes: getAttributes (attr, withUrl: hasUrl)))
+                // Then add the character, and add an extra space so that the
+                // temporary string results in the position being correctly tracked for the
+                // temporary string with the right attribute
+                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
 
                 str = ""
                 col += 1
@@ -680,13 +679,44 @@ extension TerminalView {
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                 let runFont = runAttributes[.font] as! TTFont
 
-                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                var runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                     CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                     count = runGlyphsCount
                 }
 
-                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
+                // Get the string indices for this run to detect CJK placeholder spaces
+                var stringIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
+                CTRunGetStringIndices(run, CFRange(), &stringIndices)
+
+                // Get the attributed string range for this run
+                let runRange = CTRunGetStringRange(run)
+                let runString = (lineInfo.attrStr.string as NSString).substring(with: NSRange(location: runRange.location, length: runRange.length))
+                let runChars = Array(runString)
+
+                // Build filtered glyphs and positions, skipping placeholder spaces after wide chars
+                var filteredGlyphs: [CGGlyph] = []
+                var positions: [CGPoint] = []
+                var prevWasWide = false
+
+                for i in 0..<runGlyphsCount {
+                    let charIndex = stringIndices[i] - runRange.location
+                    let isPlaceholderSpace = prevWasWide && charIndex < runChars.count && runChars[charIndex] == " "
+
+                    if !isPlaceholderSpace {
+                        filteredGlyphs.append(runGlyphs[i])
+                        positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
+                    }
+
+                    // Check if current char is wide (CJK)
+                    if charIndex < runChars.count {
+                        let char = runChars[charIndex]
+                        let code = char.unicodeScalars.first?.value ?? 0
+                        prevWasWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
+                    } else {
+                        prevWasWide = false
+                    }
+
+                    col += 1
                 }
 
                 var backgroundColor: TTColor?
@@ -696,7 +726,7 @@ extension TerminalView {
                     backgroundColor = runAttributes[.backgroundColor] as? TTColor
                 }
 
-                if let backgroundColor = backgroundColor {
+                if let backgroundColor = backgroundColor, !positions.isEmpty {
                     context.saveGState ()
 
                     context.setShouldAntialias (false)
@@ -719,7 +749,7 @@ extension TerminalView {
                     }
                     #endif
 
-                    if col + runGlyphsCount >= terminal.cols {
+                    if col >= terminal.cols {
                         size.width += frame.width - size.width
                     }
 
@@ -743,12 +773,12 @@ extension TerminalView {
                     context.setFillColor(cgColor)
                 }
 
-                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+                if !filteredGlyphs.isEmpty {
+                    CTFontDrawGlyphs(runFont, filteredGlyphs, &positions, positions.count, context)
+                }
 
                 // Draw other attributes
                 drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
-
-                col += runGlyphsCount
             }
 
             // Render any sixel content last
