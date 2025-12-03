@@ -426,25 +426,20 @@ extension TerminalView {
             }
             
             let code = ch.code
-            let charWidth = ch.width
-
-            // Skip placeholder cells (width=0) that follow wide characters
-            if charWidth == 0 {
-                col += 1
-                continue
-            }
-
-            let notWide = charWidth == 1
+            let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
             if notWide  {
                 str.append(code == 0 ? " " : ch.getCharacter ())
             } else {
                 // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Wide character (CJK): add just the character without trailing space.
-                // The drawing code handles positioning by referencing CharData.width from terminal line data.
-                res.append(NSAttributedString(string: String(ch.getCharacter()), attributes: getAttributes(attr, withUrl: hasUrl)))
+                // Add the wide character followed by a Braille Pattern Blank (U+2800).
+                // This invisible character acts as a placeholder for the second column
+                // that wide characters occupy in the terminal grid.
+                // Using U+2800 instead of space to avoid visible gaps between CJK characters.
+                res.append(NSAttributedString (string: "\(ch.getCharacter())\u{2800}", attributes: getAttributes (attr, withUrl: hasUrl)))
 
                 str = ""
+                col += 1
             }
             col += 1
         }
@@ -690,20 +685,8 @@ extension TerminalView {
                     count = runGlyphsCount
                 }
 
-                // Calculate glyph positions considering character widths from terminal data.
-                // CJK characters occupy 2 terminal columns but render as 1 glyph.
-                var positions: [CGPoint] = []
-                var glyphCol = col
-                for i in 0..<runGlyphsCount {
-                    positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(glyphCol)), y: lineOrigin.y + yOffset))
-                    // Get the character width from terminal line data
-                    if glyphCol < terminal.cols {
-                        let ch = line[glyphCol]
-                        let charWidth = Int(ch.width)
-                        glyphCol += max(charWidth, 1)
-                    } else {
-                        glyphCol += 1
-                    }
+                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
                 }
 
                 var backgroundColor: TTColor?
@@ -723,9 +706,7 @@ extension TerminalView {
 
                     let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
 
-                    // Use actual column span (glyphCol - col) instead of glyph count for proper CJK width
-                    let runColSpan = glyphCol - col
-                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runColSpan)), height: cellDimension.height)
+                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
                     #if (lastLineExtends)
@@ -738,7 +719,7 @@ extension TerminalView {
                     }
                     #endif
 
-                    if glyphCol >= terminal.cols {
+                    if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
 
@@ -761,14 +742,13 @@ extension TerminalView {
                     }
                     context.setFillColor(cgColor)
                 }
-                
+
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
                 // Draw other attributes
                 drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
 
-                // Update col to reflect actual terminal columns consumed (including wide chars)
-                col = glyphCol
+                col += runGlyphsCount
             }
 
             // Render any sixel content last
