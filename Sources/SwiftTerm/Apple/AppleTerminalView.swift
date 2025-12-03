@@ -426,7 +426,15 @@ extension TerminalView {
             }
             
             let code = ch.code
-            let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
+            let charWidth = ch.width
+
+            // Skip placeholder cells (width=0) that follow wide characters
+            if charWidth == 0 {
+                col += 1
+                continue
+            }
+
+            let notWide = charWidth == 1
             if notWide  {
                 str.append(code == 0 ? " " : ch.getCharacter ())
             } else {
@@ -437,7 +445,6 @@ extension TerminalView {
                 res.append(NSAttributedString(string: String(ch.getCharacter()), attributes: getAttributes(attr, withUrl: hasUrl)))
 
                 str = ""
-                col += 1
             }
             col += 1
         }
