@@ -432,10 +432,12 @@ extension TerminalView {
             } else {
                 // If we have a wide character, we flush the contents we have so far
                 res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Then add the character, and add an extra space, so that the space gets the same attributes as the previous
-                // cell - see https://github.com/migueldeicaza/SwiftTerm/pull/387
-                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
-                
+                // Then add the character with a zero-width space placeholder for the second column.
+                // Using ZWSP (U+200B) instead of regular space to avoid visible gaps between CJK characters.
+                // The ZWSP maintains the character count (for column alignment) but doesn't render visibly.
+                // See: https://github.com/migueldeicaza/SwiftTerm/pull/387
+                res.append(NSAttributedString (string: "\(ch.getCharacter())\u{200B}", attributes: getAttributes (attr, withUrl: hasUrl)))
+
                 str = ""
                 col += 1
             }
