@@ -696,27 +696,42 @@ extension TerminalView {
                 // Build filtered glyphs and positions, skipping placeholder spaces after wide chars
                 var filteredGlyphs: [CGGlyph] = []
                 var positions: [CGPoint] = []
-                var prevWasWide = false
 
                 for i in 0..<runGlyphsCount {
-                    let charIndex = stringIndices[i] - runRange.location
-                    let isPlaceholderSpace = prevWasWide && charIndex < runChars.count && runChars[charIndex] == " "
-
-                    if !isPlaceholderSpace {
-                        filteredGlyphs.append(runGlyphs[i])
-                        positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
+                    let charIndex = Int(stringIndices[i]) - runRange.location
+                    guard charIndex >= 0 && charIndex < runChars.count else {
+                        col += 1
+                        continue
                     }
 
-                    // Check if current char is wide (CJK)
-                    if charIndex < runChars.count {
-                        let char = runChars[charIndex]
-                        let code = char.unicodeScalars.first?.value ?? 0
-                        prevWasWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
-                    } else {
-                        prevWasWide = false
+                    let char = runChars[charIndex]
+                    let code = char.unicodeScalars.first?.value ?? 0
+
+                    // Check if this is a wide (CJK) character
+                    let isWide = !(code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2)
+
+                    // Skip placeholder spaces (space after wide char in the attributed string)
+                    // These spaces exist only to maintain character count alignment
+                    if char == " " && i > 0 {
+                        let prevCharIndex = Int(stringIndices[i-1]) - runRange.location
+                        if prevCharIndex >= 0 && prevCharIndex < runChars.count {
+                            let prevChar = runChars[prevCharIndex]
+                            let prevCode = prevChar.unicodeScalars.first?.value ?? 0
+                            let prevWasWide = !(prevCode <= 0xa0 || (prevCode > 0x452 && prevCode < 0x1100) || Wcwidth.scalarSize(Int(prevCode)) < 2)
+                            if prevWasWide {
+                                // This is a placeholder space after a wide char - skip drawing but still advance col
+                                col += 1
+                                continue
+                            }
+                        }
                     }
 
-                    col += 1
+                    // Add glyph with position at current column
+                    filteredGlyphs.append(runGlyphs[i])
+                    positions.append(CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col)), y: lineOrigin.y + yOffset))
+
+                    // Advance column: wide chars take 2 columns, others take 1
+                    col += isWide ? 2 : 1
                 }
 
                 var backgroundColor: TTColor?
