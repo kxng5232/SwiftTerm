@@ -717,8 +717,8 @@ extension TerminalView {
 
                     // Skip placeholder space after wide character
                     // Don't advance col here - it was already accounted for in the wide char's col += 2
+                    // Don't reset prevWasWide here - the next char determines it
                     if char == " " && prevWasWide {
-                        prevWasWide = false
                         continue
                     }
 
